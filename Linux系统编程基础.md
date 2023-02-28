@@ -705,7 +705,7 @@ void _exit(int status);
 ```c
     #include <sys/types.h>
     #include <sys/wait.h>
-    pid_t wait(int *wstatus);
+  ◼  pid_t wait(int *wstatus);
         功能：等待任意一个子进程结束，如果任意一个子进程结束了，函数会回收子进程的资源。
         参数：int *wstatus
             进程退出时的状态信息，传入的是一个int类型的地址，传出参数。
@@ -715,8 +715,13 @@ void _exit(int status);
 
     调用wait函数的进程会被挂起（阻塞），直到它的一个子进程退出或者收到一个不能被忽略的信号时才被唤醒（相当于继续往下执行）
     如果没有子进程了，函数立刻返回，返回-1；如果子进程都已经结束了，也会立即返回，返回-1.
-
-
+     
+  ◼ pid_t waitpid(pid_t pid, int *wstatus, int options);
+       #include <sys/types.h>
+       #include <sys/wait.h>
+       -1     等待所有子进程结束
+       0      等待进程组所有的子进程结束
+       > 0    等待pid等于Pid的子进程结束
 ```
 
 ◼ 在每个进程退出的时候，内核释放该进程所有的资源、包括打开的文件、占用的内存等。但是仍然为其保留一定的信息，这些信息主要主要指进程控制块PCB的信息 （包括进程号、退出状态、运行时间等）。 
@@ -1206,8 +1211,33 @@ void * ptr = mmap(NULL, 100,,,,,);
     SIGKILL SIGSTOP不能被捕捉，不能被忽略。
 
 ◼ int sigaction(int signum, const struct sigaction *act, 
-	struct sigaction *oldact)
-          
+							struct sigaction *oldact)
+   #include <signal.h>
+    int sigaction(int signum, const struct sigaction *act,
+                            struct sigaction *oldact);
+
+        - 功能：检查或者改变信号的处理。信号捕捉
+        - 参数：
+            - signum : 需要捕捉的信号的编号或者宏值（信号的名称）
+            - act ：捕捉到信号之后的处理动作
+            - oldact : 上一次对信号捕捉相关的设置，一般不使用，传递NULL
+        - 返回值：
+            成功 0
+            失败 -1
+
+     struct sigaction {
+        // 函数指针，指向的函数就是信号捕捉到之后的处理函数
+        void     (*sa_handler)(int);
+        // 不常用
+        void     (*sa_sigaction)(int, siginfo_t *, void *);
+        // 临时阻塞信号集，在信号捕捉函数执行过程中，临时阻塞某些信号。
+        sigset_t   sa_mask;
+        // 使用哪一个信号处理对捕捉到的信号进行处理
+        // 这个值可以是0，表示使用sa_handler,也可以是SA_SIGINFO表示使用sa_sigaction
+        int        sa_flags;
+        // 被废弃掉了
+        void     (*sa_restorer)(void);
+    };
 ```
 
 
@@ -1305,12 +1335,11 @@ void * ptr = mmap(NULL, 100,,,,,);
             成功：0
             失败：-1
                 设置错误号：EFAULT、EINVAL
-
+                
+◼ int sigpending(sigset_t *set);
     int sigpending(sigset_t *set);
         - 功能：获取内核中的未决信号集
         - 参数：set,传出参数，保存的是内核中的未决信号集中的信息。
-
-◼ int sigpending(sigset_t *set);
 ```
 
 
@@ -1321,6 +1350,10 @@ void * ptr = mmap(NULL, 100,,,,,);
 
 ### 2.10 SIGCHLD信号
 
-◼ SIGCHLD信号产生的条件  子进程终止时  子进程接收到 SIGSTOP 信号停止时  子进程处在停止态，接受到SIGCONT后唤醒时 
+◼ SIGCHLD信号产生的条件 
+
+- 子进程终止时 
+- 子进程接收到 SIGSTOP 信号停止时 
+- 子进程处在停止态，接受到SIGCONT后唤醒时 
 
 ◼ 以上三种条件都会给父进程发送 SIGCHLD 信号，父进程默认会忽略该信号
