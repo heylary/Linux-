@@ -18,7 +18,7 @@ GCC 原名为 GNU C语言编译器（GNU C Compiler）
 ![image-20230223150309392](D:\WorkData\MarkdownData\Linux高并发\assets\image-20230223150309392.png)
 
 
-
+1
 ### 1.3 GCC和G++的区别
 
 gcc 和 g++都是GNU(组织)的一个编译器。
@@ -716,12 +716,12 @@ void _exit(int status);
     调用wait函数的进程会被挂起（阻塞），直到它的一个子进程退出或者收到一个不能被忽略的信号时才被唤醒（相当于继续往下执行）
     如果没有子进程了，函数立刻返回，返回-1；如果子进程都已经结束了，也会立即返回，返回-1.
      
-  ◼ pid_t waitpid(pid_t pid, int *wstatus, int options);
+  ◼ pid_t waitpid(pid_t pid, int *wstatus, int options); (null,WNOHANG)
        #include <sys/types.h>
        #include <sys/wait.h>
-       -1     等待所有子进程结束
-       0      等待进程组所有的子进程结束
-       > 0    等待pid等于Pid的子进程结束
+       -1     所有子进程结束
+       0      还有子进程活着
+       > 0    等于Pid的子进程结束
 ```
 
 ◼ 在每个进程退出的时候，内核释放该进程所有的资源、包括打开的文件、占用的内存等。但是仍然为其保留一定的信息，这些信息主要主要指进程控制块PCB的信息 （包括进程号、退出状态、运行时间等）。 
@@ -1357,3 +1357,650 @@ void * ptr = mmap(NULL, 100,,,,,);
 - 子进程处在停止态，接受到SIGCONT后唤醒时 
 
 ◼ 以上三种条件都会给父进程发送 SIGCHLD 信号，父进程默认会忽略该信号
+
+
+
+## 3.共享内存
+
+### 3.1 共享内存概念
+
+◼  共享内存**允许两个或者多个进程共享物理内存的同一块区域**（通常被称为段）。由于 一个共享内存段会称为一个进程用户空间的一部分，因此这种 IPC 机制**无需内核介入**。所有需要做的就是让一个进程将数据复制进共享内存中，并且这部分数据会对其 他所有共享同一个段的进程可用。
+
+◼ 与管道等要求发送进程将数据从用户空间的缓冲区复制进内核内存和接收进程将数据 从内核内存复制进用户空间的缓冲区的做法相比，这种 IPC 技术的速度更快。
+
+
+
+### 3.2 共享内存使用步骤
+
+◼ 调用 shmget() 创建一个新共享内存段或取得一个既有共享内存段的标识符（即由其 他进程创建的共享内存段）。这个调用将返回后续调用中需要用到的共享内存标识符。 **(1.创建共享内存)**
+
+◼ 使用 shmat() 来附上共享内存段，即使该段成为调用进程的虚拟内存的一部分。 **（2.与当前进程关联起来）**
+
+◼ 此刻在程序中可以像对待其他可用内存那样对待这个共享内存段。为引用这块共享内存， 程序需要使用由 shmat() 调用返回的 addr 值，它是一个指向进程的虚拟地址空间 中该共享内存段的起点的指针。 
+
+◼ 调用 shmdt() 来分离共享内存段。在这个调用之后，进程就无法再引用这块共享内存 了。这一步是可选的，并且在进程终止时会自动完成这一步。 （**3.共享内存分离**）
+
+◼ 调用 shmctl() 来删除共享内存段。只有当当前所有附加内存段的进程都与之分离之 后内存段才会销毁。只有一个进程需要执行这一步。**（4.删除共享内存）**
+
+
+
+### 3.3 共享内存操作函数
+
+```c
+共享内存相关的函数
+#include <sys/ipc.h>
+#include <sys/shm.h>
+◼ int shmget(key_t key, size_t size, int shmflg); 
+    int shmget(key_t key, size_t size, int shmflg);
+        - 功能：创建一个新的共享内存段，或者获取一个既有的共享内存段的标识。
+            新创建的内存段中的数据都会被初始化为0
+        - 参数：
+            - key : key_t类型是一个整形，通过这个找到或者创建一个共享内存。
+                    一般使用16进制表示，非0值
+            - size: 共享内存的大小
+            - shmflg: 属性
+                - 访问权限
+                - 附加属性：创建/判断共享内存是不是存在
+                    - 创建：IPC_CREAT
+                    - 判断共享内存是否存在： IPC_EXCL , 需要和IPC_CREAT一起使用
+                        IPC_CREAT | IPC_EXCL | 0664
+            - 返回值：
+                失败：-1 并设置错误号
+                成功：>0 返回共享内存的引用的ID，后面操作共享内存都是通过这个值。
+                
+◼ void *shmat(int shmid, const void *shmaddr, int shmflg); 
+    void *shmat(int shmid, const void *shmaddr, int shmflg);
+        - 功能：和当前的进程进行关联
+        - 参数：
+            - shmid : 共享内存的标识（ID）,由shmget返回值获取
+            - shmaddr: 申请的共享内存的起始地址，指定NULL，内核指定
+            - shmflg : 对共享内存的操作
+                - 读 ： SHM_RDONLY, 必须要有读权限
+                - 读写： 0
+        - 返回值：
+            成功：返回共享内存的首（起始）地址。  失败(void *) -1
+◼ int shmdt(const void *shmaddr); 
+	int shmdt(const void *shmaddr);
+    - 功能：解除当前进程和共享内存的关联
+    - 参数：
+        shmaddr：共享内存的首地址
+    - 返回值：成功 0， 失败 -1
+        
+◼ int shmctl(int shmid, int cmd, struct shmid_ds *buf); 
+	int shmctl(int shmid, int cmd, struct shmid_ds *buf);
+    - 功能：对共享内存进行操作。删除共享内存，共享内存要删除才会消失，创建共享内存的进行被销毁了对共享内存是没有任何影响。
+    - 参数：
+        - shmid: 共享内存的ID
+        - cmd : 要做的操作
+            - IPC_STAT : 获取共享内存的当前的状态
+            - IPC_SET : 设置共享内存的状态
+            - IPC_RMID: 标记共享内存被销毁
+        - buf：需要设置或者获取的共享内存的属性信息
+            - IPC_STAT : buf存储数据
+            - IPC_SET : buf中需要初始化数据，设置到内核中
+            - IPC_RMID : 没有用，NULL
+                
+◼ key_t ftok(const char *pathname, int proj_id);
+	key_t ftok(const char *pathname, int proj_id);
+    - 功能：根据指定的路径名，和int值，生成一个共享内存的key
+    - 参数：
+        - pathname:指定一个存在的路径
+            /home/nowcoder/Linux/a.txt
+            / 
+        - proj_id: int类型的值，但是这系统调用只会使用其中的1个字节
+                   范围 ： 0-255  一般指定一个字符 'a'
+
+
+```
+
+
+
+### 3.4 共享内存操作命令
+
+◼ ipcs 用法 
+
+-  ipcs -a // 打印当前系统中所有的进程间通信方式的信息 
+-  **ipcs -m // 打印出使用共享内存进行进程间通信的信息** 
+-  ipcs -q // 打印出使用消息队列进行进程间通信的信息 
+-  ipcs -s // 打印出使用信号进行进程间通信的信息 
+
+◼ ipcrm 用法 
+
+-  ipcrm -M shmkey // 移除用shmkey创建的共享内存段 
+-  ipcrm -m shmid // 移除用shmid标识的共享内存段 
+-  ipcrm -Q msgkey // 移除用msqkey创建的消息队列 
+-  ipcrm -q msqid // 移除用msqid标识的消息队列 
+-  ipcrm -S semkey // 移除用semkey创建的信号 
+-  ipcrm -s semid // 移除用semid标识的信号
+
+
+
+```
+问题1：操作系统如何知道一块共享内存被多少个进程关联？
+
+   - 共享内存维护了一个结构体struct shmid_ds 这个结构体中有一个成员 shm_nattch
+     - shm_nattach 记录了关联的进程个数
+
+问题2：可不可以对共享内存进行多次删除 shmctl
+
+   - 可以的
+     - 因为shmctl 标记删除共享内存，不是直接删除
+       - 什么时候真正删除呢?
+         当和共享内存关联的进程数为0的时候，就真正被删除
+       - 当共享内存的key为0的时候，表示共享内存被标记删除了
+         如果一个进程和共享内存取消关联，那么这个进程就不能继续操作这个共享内存。也不能进行关联。
+
+    共享内存和内存映射的区别
+    1.共享内存可以直接创建，内存映射需要磁盘文件（匿名映射除外）
+    2.共享内存效果更高
+    3.内存
+        所有的进程操作的是同一块共享内存。
+        内存映射，每个进程在自己的虚拟地址空间中有一个独立的内存。
+    4.数据安全
+   - 进程突然退出
+     共享内存还存在
+     内存映射区消失
+        - 运行进程的电脑死机，宕机了
+          数据存在在共享内存中，没有了
+          内存映射区的数据 ，由于磁盘文件中的数据还在，所以内存映射区的数据还存在。
+    5.生命周期
+   - 内存映射区：进程退出，内存映射区销毁
+     内存：进程退出，共享内存还在，标记删除（所有的关联的进程数为0），或者关机
+     如果一个进程退出，会自动和共享内存进行取消关联。
+
+
+```
+
+## 4.守护进程
+
+### 4.1 终端
+
+◼ 在 UNIX 系统中，用户通过终端登录系统后得到一个 shell 进程，这个终端成 为 shell 进程的控制终端（Controlling Terminal），进程中，控制终端是 保存在 PCB 中的信息，而 fork() 会复制 PCB 中的信息，因此由 shell 进 程启动的其它进程的控制终端也是这个终端。 
+
+◼ 默认情况下（没有重定向），每个进程的标准输入、标准输出和标准错误输出都指 向控制终端，进程从标准输入读也就是读用户的键盘输入，进程往标准输出或标准 错误输出写也就是输出到显示器上。 
+
+◼ 在控制终端输入一些特殊的控制键可以给前台进程发信号，例如 Ctrl + C 会产 生 SIGINT 信号，Ctrl + \ 会产生 SIGQUIT 信号。
+
+
+
+### 4.2 进程组
+
+◼ 进程组和会话在进程之间形成了一种两级层次关系：**进程组是一组相关进程的集合**， **会话是一组相关进程组的集合**。进程组和会话是为支持 shell 作业控制而定义的抽 象概念，用户通过 shell 能够交互式地在前台或后台运行命令。 
+
+◼ 进行组由一个或多个共享同一**进程组标识符（PGID）**的进程组成。一个进程组拥有一 个进程组首进程，该进程是创建该组的进程，其进程 ID 为该进程组的 ID，新进程 会继承其父进程所属的进程组 ID。 
+
+◼ 进程组拥有一个生命周期，其开始时间为首进程创建组的时刻，结束时间为最后一个 成员进程退出组的时刻。一个进程可能会因为终止而退出进程组，也可能会因为加入 了另外一个进程组而退出进程组。进程组首进程无需是最后一个离开进程组的成员。
+
+
+
+### 4.3 会话
+
+◼ 会话是一组进程组的集合。**会话首进程是创建该新会话的进程**，其进程 ID 会成为会 话 ID。新进程会继承其父进程的会话 ID。 
+
+◼ 一个会话中的所有进程共享单个控制终端。控制终端会在会话首进程首次打开一个终端设备时被建立。一个终端最多可能会成为一个会话的控制终端。
+
+◼ 在任一时刻，会话中的其中一个进程组会成为终端的前台进程组，其他进程组会成为 后台进程组。只有前台进程组中的进程才能从控制终端中读取输入。当用户在控制终 端中输入终端字符生成信号后，该信号会被发送到前台进程组中的所有成员。 
+
+◼ 当控制终端的连接建立起来之后，会话首进程会成为该终端的控制进程。
+
+
+
+### 4.4 进程组、会话、控制终端之间的关系
+
+`◼ find / 2 > /dev/null | wc -l &` 
+
+`◼ sort < longlist | uniq -c`
+
+![image-20230301092919069](D:\WorkData\MarkdownData\Linux高并发\assets\image-20230301092919069.png)
+
+### 4.5 进程组、会话操作函数
+
+```c
+◼ pid_t getpgrp(void); 
+
+◼ pid_t getpgid(pid_t pid); 
+
+◼ int setpgid(pid_t pid, pid_t pgid); 
+
+◼ pid_t getsid(pid_t pid); 
+
+◼ pid_t setsid(void);
+```
+
+### 4.6 守护进程
+
+◼ 守护进程（Daemon Process），也就是通常说的 Daemon 进程（精灵进程），是 Linux 中的后台服务进程。它是一个生存期较长的进程，通常独立于控制终端并且周 期性地执行某种任务或等待处理某些发生的事件。一般采用以 d 结尾的名字。 
+
+◼ 守护进程具备下列特征： 
+
+- 生命周期很长，守护进程会在系统启动的时候被创建并一直运行直至系统被关闭。 
+- 它在后台运行并且不拥有控制终端。没有控制终端确保了内核永远不会为守护进程自动生成任何控制信号以及终端相关的信号（如 SIGINT、SIGQUIT）。 
+
+◼ Linux 的大多数服务器就是用守护进程实现的。比如，Internet 服务器 inetd， Web 服务器 httpd 等。
+
+
+
+### 4.7 守护进程的创建步骤
+
+◼ 执行一个 fork()，之后父进程退出，子进程继续执行。 
+
+◼ 子进程调用 setsid() 开启一个新会话。 setsid()
+
+◼ 清除进程的 umask 以确保当守护进程创建文件和目录时拥有所需的权限。 	umask(022)
+
+◼ 修改进程的当前工作目录，通常会改为根目录（/）。 chdir("/")
+
+◼ 关闭守护进程从其父进程继承而来的所有打开着的文件描述符。 dup2(fd,STDIN_FILENO)
+
+◼ 在关闭了文件描述符0、1、2之后，守护进程通常会打开/dev/null 并使用dup2()  使所有这些描述符指向这个设备。 
+
+◼ 核心业务逻辑
+
+```c
+void work(int num) {
+    // 捕捉到信号之后，获取系统时间，写入磁盘文件
+    time_t tm = time(NULL);
+    struct tm * loc = localtime(&tm);
+    // char buf[1024];
+
+    // sprintf(buf, "%d-%d-%d %d:%d:%d\n",loc->tm_year,loc->tm_mon
+    // ,loc->tm_mday, loc->tm_hour, loc->tm_min, loc->tm_sec);
+
+    // printf("%s\n", buf);
+
+    char * str = asctime(loc);
+    int fd = open("time.txt", O_RDWR | O_CREAT | O_APPEND, 0664);
+    write(fd ,str, strlen(str));
+    close(fd);
+}
+
+int main() {
+
+    // 1.创建子进程，退出父进程
+    pid_t pid = fork();
+
+    if(pid > 0) {
+        exit(0);
+    }
+
+    // 2.将子进程重新创建一个会话
+    setsid();
+
+    // 3.设置掩码
+    umask(022);
+
+    // 4.更改工作目录
+    chdir("/home/nowcoder/");
+
+    // 5. 关闭、重定向文件描述符
+    int fd = open("/dev/null", O_RDWR);
+    dup2(fd, STDIN_FILENO);
+    dup2(fd, STDOUT_FILENO);
+    dup2(fd, STDERR_FILENO);
+
+    // 6.业务逻辑
+
+    // 捕捉定时信号
+    struct sigaction act;
+    act.sa_flags = 0;
+    act.sa_handler = work;
+    sigemptyset(&act.sa_mask);
+    sigaction(SIGALRM, &act, NULL);
+
+    struct itimerval val;
+    val.it_value.tv_sec = 2;
+    val.it_value.tv_usec = 0;
+    val.it_interval.tv_sec = 2;
+    val.it_interval.tv_usec = 0;
+
+    // 创建定时器
+    setitimer(ITIMER_REAL, &val, NULL);
+
+    // 不让进程结束
+    while(1) {
+        sleep(10);
+    }
+
+    return 0;
+}
+```
+
+
+
+# 第三章 Linux多线程开发
+
+## 1. 线程
+
+### 1.1 线程概述
+
+◼ 与进程（process）类似，线程（thread）是**允许应用程序并发执行多个任务的一种机制**。**一个进程可以包含多个线程**。同一个程序中的所有线程均会独立执行相同程序，且共享同一份全局内存区域，其中包括初始化数据段、未初始化数据段，以及堆内存段。（传 统意义上的 UNIX 进程只是多线程程序的一个特例，该进程只包含一个线程） 
+
+◼ **进程是 CPU 分配资源的最小单位**，**线程是操作系统调度执行的最小单位**。 
+
+◼ 线程是轻量级的进程（LWP：Light Weight Process），在 Linux 环境下线程的本 质仍是进程。 `
+
+◼ 查看指定进程的 LWP 号：`ps –Lf pid`
+
+
+
+### 1.2 线程和进程的区别
+
+◼ 进程间的信息难以共享。由于除去只读代码段外，父子进程并未共享内存，因此必须采用 一些进程间通信方式，在进程间进行信息交换。 
+
+◼ 调用 fork() 来创建进程的代价相对较高，即便利用写时复制技术，仍然需要复制诸如 内存页表和文件描述符表之类的多种进程属性，这意味着 fork() 调用在时间上的开销 依然不菲。 
+
+◼ 线程之间能够方便、快速地共享信息。只需将数据复制到共享（全局或堆）变量中即可。 
+
+◼ 创建线程比创建进程通常要快 10 倍甚至更多。**线程间是共享虚拟地址空间**的，无需采用写时复制来复制内存，也无需复制页表。
+
+
+
+### 1.3 线程和进程虚拟地址空间
+
+![image-20230301141511609](D:\WorkData\MarkdownData\Linux高并发\assets\image-20230301141511609.png)
+
+
+
+#### 1.4 线程之间共享和非共享资源
+
+◼ 共享资源 
+
+-  进程 ID 和父进程 ID 
+-  进程组 ID 和会话 ID 
+-  用户 ID 和 用户组 ID 
+-  文件描述符表 
+-  信号处置 
+-  文件系统的相关信息：文件权限掩码 （umask）、当前工作目录  虚拟地址空间（除栈、.text）
+
+◼ 非共享资源 
+
+- **线程 ID** 
+- 信号掩码 
+- **线程特有数据** 
+- error 变量 
+- 实时调度策略和优先级 
+- 栈，本地变量和函数的调用链接信息
+
+### 
+
+### 1.5 NPTL
+
+◼ 当 Linux 最初开发时，在内核中并不能真正支持线程。但是它的确可以通过 clone()  系统调用将进程作为可调度的实体。这个调用创建了调用进程（calling process）的 一个拷贝，这个拷贝与调用进程共享相同的地址空间。LinuxThreads 项目使用这个调用 来完成在用户空间模拟对线程的支持。不幸的是，这种方法有一些缺点，尤其是在信号处 理、调度和进程间同步等方面都存在问题。另外，这个线程模型也不符合 POSIX 的要求。 
+
+◼ 要改进 LinuxThreads，需要内核的支持，并且重写线程库。有两个相互竞争的项目开始 来满足这些要求。一个包括 IBM 的开发人员的团队开展了 NGPT（Next-Generation  POSIX Threads）项目。同时，Red Hat 的一些开发人员开展了 NPTL 项目。NGPT  在 2003 年中期被放弃了，把这个领域完全留给了 NPTL。 
+
+◼ **NPTL，或称为 Native POSIX Thread Library，是 Linux 线程的一个新实现**，它 克服了 LinuxThreads 的缺点，同时也符合 POSIX 的需求。与 LinuxThreads 相 比，它在性能和稳定性方面都提供了重大的改进。 
+
+◼ 查看当前 pthread 库版本：`getconf GNU_LIBPTHREAD_VERSION`
+
+
+
+### 1.6 线程操作函数
+
+```c
+◼ int pthread_create(pthread_t *thread, const pthread_attr_t *attr,  void *(*start_routine) (void *), void *arg); 
+    一般情况下,main函数所在的线程我们称之为主线程（main线程），其余创建的线程称之为子线程。
+    程序中默认只有一个进程，fork()函数调用，2个进程
+    程序中默认只有一个线程，pthread_create()函数调用，2个线程。
+
+    #include <pthread.h>
+    int pthread_create(pthread_t *thread, const pthread_attr_t *attr, 
+    void *(*start_routine) (void *), void *arg);
+
+        - 功能：创建一个子线程
+        - 参数：
+            - thread：传出参数，线程创建成功后，子线程的线程ID被写到该变量中。
+            - attr : 设置线程的属性，一般使用默认值，NULL
+            - start_routine : 函数指针，这个函数是子线程需要处理的逻辑代码
+            - arg : 给第三个参数使用，传参
+        - 返回值：
+            成功：0
+            失败：返回错误号。这个错误号和之前errno不太一样。
+            获取错误号的信息：  char * strerror(int errnum);
+
+    // 创建一个子线程
+    int ret = pthread_create(&tid, NULL, callback, (void *)&num);
+    if(ret != 0) {
+        char * errstr = strerror(ret);
+        printf("error : %s\n", errstr);
+    } 
+
+◼ pthread_t pthread_self(void); 
+    pthread_t pthread_self(void);
+        功能：获取当前的线程的线程ID
+            
+◼ int pthread_equal(pthread_t t1, pthread_t t2); 
+    int pthread_equal(pthread_t t1, pthread_t t2);
+        功能：比较两个线程ID是否相等
+        不同的操作系统，pthread_t类型的实现不一样，有的是无符号的长整型，有的
+        是使用结构体去实现的。
+
+◼ void pthread_exit(void *retval); 
+    #include <pthread.h>
+    void pthread_exit(void *retval);
+        功能：终止一个线程，在哪个线程中调用，就表示终止哪个线程
+        参数：
+            retval:需要传递一个指针，作为一个返回值，可以在pthread_join()中获取到。
+
+
+◼ int pthread_join(pthread_t thread, void **retval); 
+    #include <pthread.h>
+    int pthread_join(pthread_t thread, void **retval);
+        - 功能：和一个已经终止的线程进行连接
+                回收子线程的资源
+                这个函数是阻塞函数，调用一次只能回收一个子线程
+                一般在主线程中使用
+        - 参数：
+            - thread：需要回收的子线程的ID
+            - retval: 接收子线程退出时的返回值
+        - 返回值：
+            0 : 成功
+            非0 : 失败，返回的错误号
+                
+◼ int pthread_detach(pthread_t thread); 
+	   #include <pthread.h>
+    int pthread_detach(pthread_t thread);
+        - 功能：分离一个线程。被分离的线程在终止的时候，会自动释放资源返回给系统。
+          1.不能多次分离，会产生不可预料的行为。
+          2.不能去连接一个已经分离的线程，会报错。
+        - 参数：需要分离的线程的ID
+        - 返回值：
+            成功：0
+            失败：返回错误号
+            
+◼ int pthread_cancel(pthread_t thread);
+    #include <pthread.h>
+    int pthread_cancel(pthread_t thread);
+        - 功能：取消线程（让线程终止）
+            取消某个线程，可以终止某个线程的运行，
+            但是并不是立马终止，而是当子线程执行到一个取消点，线程才会终止。
+            取消点：系统规定好的一些系统调用，我们可以粗略的理解为从用户区到内核区的切换，这个位置称之为取消点。
+```
+
+
+
+### 1.7 线程属性
+
+```c
+◼ 线程属性类型 pthread_attr_t 
+
+◼    int pthread_attr_init(pthread_attr_t *attr);
+        - 初始化线程属性变量
+
+◼    int pthread_attr_destroy(pthread_attr_t *attr);
+        - 释放线程属性的资源
+
+◼    int pthread_attr_getdetachstate(const pthread_attr_t *attr, int *detachstate);
+        - 获取线程分离的状态属性
+
+ ◼   int pthread_attr_setdetachstate(pthread_attr_t *attr, int detachstate);
+        - 设置线程分离的状态属性
+```
+
+```c
+void * callback(void * arg) {
+    printf("chid thread id : %ld\n", pthread_self());
+    return NULL;
+}
+
+int main() {
+
+    // 创建一个线程属性变量
+    pthread_attr_t attr;
+    // 初始化属性变量
+    pthread_attr_init(&attr);
+
+    // 设置属性
+    pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+
+    // 创建一个子线程
+    pthread_t tid;
+
+    int ret = pthread_create(&tid, &attr, callback, NULL);
+    if(ret != 0) {
+        char * errstr = strerror(ret);
+        printf("error1 : %s\n", errstr);
+    }
+
+    // 获取线程的栈的大小
+    size_t size;
+    pthread_attr_getstacksize(&attr, &size);
+    printf("thread stack size : %ld\n", size);
+
+    // 输出主线程和子线程的id
+    printf("tid : %ld, main thread id : %ld\n", tid, pthread_self());
+
+    // 释放线程属性资源
+    pthread_attr_destroy(&attr);
+
+    pthread_exit(NULL);
+
+    return 0;
+}
+```
+
+
+
+## 2. 线程同步
+
+### 2.1 线程同步概念
+
+**◼线程同步**：**即当有一个线程在对内存进行操作时，其他线程都不可以对这个内存地址进行操作**，直到该线程完成操作，其他线程才能对该内存地址进行操作，而其他线程则处于等待状态
+
+◼**线程的主要优势在于**，能够通过全局变量来共享信息。不过，这种便捷的共享是有代价 的：**必须确保多个线程不会同时修改同一变量**，或者某一线程不会读取正在由其他线程 修改的变量。
+
+◼临界区是指访问某一共享资源的代码片段，并且这段代码的执行应为原子操作，也就是 同时访问同一共享资源的其他线程不应终端该片段的执行。
+
+
+
+### 2.2 互斥
+
+◼ 为避免线程更新共享变量时出现问题，可以使用互斥量（mutex 是 mutual exclusion 的缩写）来确保同时仅有一个线程可以访问某项共享资源。可以使用互斥量来保证对任意共 享资源的原子访问。 
+
+◼ 互斥量有两种状态：已锁定（locked）和未锁定（unlocked）。任何时候，至多只有一 个线程可以锁定该互斥量。试图对已经锁定的某一互斥量再次加锁，将可能阻塞线程或者报 错失败，具体取决于加锁时使用的方法。 
+
+◼ 一旦线程锁定互斥量，随即成为该互斥量的所有者，只有所有者才能给互斥量解锁。一般情 况下，对每一共享资源（可能由多个相关变量组成）会使用不同的互斥量，每一线程在访问 同一资源时将采用如下协议： 
+
+​	⚫ 针对共享资源锁定互斥量 
+
+​	⚫ 访问共享资源 
+
+​	⚫ 对互斥量解锁
+
+◼ 如果多个线程试图执行这一块代码（一个临界区），事实上只有一个线程能够持有该互斥 量（其他线程将遭到阻塞），即同时只有一个线程能够进入这段代码区域，如下图所示：
+
+![image-20230302095928935](D:\WorkData\MarkdownData\Linux高并发\assets\image-20230302095928935.png)
+
+### 2.3 互斥量相关操作函数
+
+```c
+◼ 互斥量的类型 pthread_mutex_t
+
+◼ int pthread_mutex_init(pthread_mutex_t *restrict mutex,  const pthread_mutexattr_t *restrict attr); 
+
+◼ int pthread_mutex_destroy(pthread_mutex_t *mutex); 
+
+◼ int pthread_mutex_lock(pthread_mutex_t *mutex); 
+
+◼ int pthread_mutex_trylock(pthread_mutex_t *mutex); 
+
+◼ int pthread_mutex_unlock(pthread_mutex_t *mutex)
+```
+
+
+
+### 2.4 死锁
+
+◼ 有时，一个线程需要同时访问两个或更多不同的共享资源，而每个资源又都由不同的互斥量管理。当超过一个线程加锁同一组互斥量时，就有可能发生死锁。 ◼ 两个或两个以上的进程在执行过程中，因争夺共享资源而造成的一种互相等待的现象， 若无外力作用，它们都将无法推进下去。此时称系统处于死锁状态或系统产生了死锁。 
+
+◼ 死锁的几种场景： 
+
+- 忘记释放锁 
+- 重复加锁 
+- 多线程多锁，抢占锁资源
+
+![image-20230302100106150](D:\WorkData\MarkdownData\Linux高并发\assets\image-20230302100106150.png)
+
+### 2.5 读写锁
+
+◼ 当有一个线程已经持有互斥锁时，互斥锁将所有试图进入临界区的线程都阻塞住。但是考 虑一种情形，当前持有互斥锁的线程只是要读访问共享资源，而同时有其它几个线程也想 读取这个共享资源，但是由于互斥锁的排它性，所有其它线程都无法获取锁，也就无法读 访问共享资源了，但是实际上多个线程同时读访问共享资源并不会导致问题。 
+
+◼ 在对数据的读写操作中，更多的是读操作，写操作较少，例如对数据库数据的读写应用。 为了满足当前能够允许多个读出，但只允许一个写入的需求，线程提供了读写锁来实现。 
+
+◼ 读写锁的特点： 
+
+- 如果有其它线程读数据，则允许其它线程执行读操作，但不允许写操作。  
+- 如果有其它线程写数据，则其它线程都不允许读、写操作。  
+- 写是独占的，写的优先级高
+
+### 2.6 读写锁相关操作函数
+
+```c
+◼ 读写锁的类型 pthread_rwlock_t 
+
+◼ int pthread_rwlock_init(pthread_rwlock_t *restrict rwlock,  const pthread_rwlockattr_t *restrict attr); 
+
+◼ int pthread_rwlock_destroy(pthread_rwlock_t *rwlock); 
+
+◼ int pthread_rwlock_rdlock(pthread_rwlock_t *rwlock); 
+
+◼ int pthread_rwlock_tryrdlock(pthread_rwlock_t *rwlock); 
+
+◼ int pthread_rwlock_wrlock(pthread_rwlock_t *rwlock); 
+
+◼ int pthread_rwlock_trywrlock(pthread_rwlock_t *rwlock); 
+
+◼ int pthread_rwlock_unlock(pthread_rwlock_t *rwlock);
+```
+
+### 2.7 条件变量
+
+```c
+◼ 条件变量的类型 pthread_cond_t 
+
+◼ int pthread_cond_init(pthread_cond_t *restrict cond, const  pthread_condattr_t *restrict attr); 
+
+◼ int pthread_cond_destroy(pthread_cond_t *cond); 
+
+◼ int pthread_cond_wait(pthread_cond_t *restrict cond,  pthread_mutex_t *restrict mutex); 
+
+◼ int pthread_cond_timedwait(pthread_cond_t *restrict cond,  pthread_mutex_t *restrict mutex, const struct timespec *restrict  abstime); 
+
+◼ int pthread_cond_signal(pthread_cond_t *cond); 
+
+◼ int pthread_cond_broadcast(pthread_cond_t *cond)
+```
+
+### 2.8 信号量
+
+```c
+◼ 信号量的类型 sem_t
+◼ int sem_init(sem_t *sem, int pshared, unsigned int value);
+◼ int sem_destroy(sem_t *sem);
+◼ int sem_wait(sem_t *sem);
+◼ int sem_trywait(sem_t *sem);
+◼ int sem_timedwait(sem_t *sem, const struct timespec *abs_timeout);
+◼ int sem_post(sem_t *sem);
+◼ int sem_getvalue(sem_t *sem, int *sval);1
+```
+
