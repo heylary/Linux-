@@ -1,5 +1,7 @@
 {
     "files.associations": {
-        "cstdlib": "c"
+        "cstdlib": "c",
+        "types.h": "c",
+        "string.h": "c"
     }
 }
