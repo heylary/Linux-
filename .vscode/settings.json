@@ -2,6 +2,16 @@
     "files.associations": {
         "cstdlib": "c",
         "types.h": "c",
-        "string.h": "c"
+        "string.h": "c",
+        "cmath": "cpp",
+        "cstdarg": "cpp",
+        "cstdio": "cpp",
+        "exception": "cpp",
+        "type_traits": "cpp",
+        "limits": "cpp",
+        "new": "cpp",
+        "*.tcc": "cpp",
+        "cstdint": "cpp",
+        "typeinfo": "cpp"
     }
 }
