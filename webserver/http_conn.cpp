@@ -32,7 +32,7 @@ void addfd(int epollfd,int fd, bool one_shot) {
     event.events = EPOLLIN | EPOLLRDHUP; 
 
     if(one_shot) {
-        event.events | EPOLLONESHOT;
+        event.events |= EPOLLONESHOT;
     }
 
     epoll_ctl(epollfd,EPOLL_CTL_ADD,fd,&event);
