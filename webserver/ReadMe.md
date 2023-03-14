@@ -28,3 +28,29 @@ signal() 发送条件变量信号和 broadcast() 广播条件变量信号。
 4. 如果获取到的任务为空，则跳过本次循环继续下一次等待。
 5. 否则，调用任务的 process() 函数来处理任务。
 此外，还使用了自己实现的 locker 类和 sem 类封装了互斥锁和信号量等同步机制，以确保线程安全性和避免竞态条件。
+
+## 3. http_conn.h
+这段代码是一个 HTTP 服务器基于 epoll I/O 复用模型的实现，定义了一个 http_conn 类。该类包括以下成员变量和函数：
+
+m_epollfd：所有的 socket 事件都被注册到同一个 epoll 对象上。
+m_user_count：统计用户的数量。
+m_sockfd：该 http 连接的 socket。
+m_address：通信的 socket 地址。
+
+函数包括：
+process()：处理客户端的请求。
+init()：初始化新接收的连接。
+close_conn()：关闭连接。
+read()：非阻塞的读。
+write()：非阻塞的写。
+
+##3. http_conn.cpp (commit at 03/14)
+这段代码是一个简单的基于Epoll多路复用模型的HTTP服务器的实现，主要包含以下内容：
+1.定义了全局变量 m_epollfd 作为所有 socket 事件都被注册到同一个 epoll 对象上的文件描述符；另外定义 m_user_count 统计连接上的用户数量。
+2.封装了一些常用操作函数，如设置文件描述符非阻塞、添加文件描述符到 epoll 中、从 epoll 中删除文件描述符、修改 epoll 文件描述符等。
+3.初始化连接：将 client 的 sockfd 添加到 epoll 对象中，并开启 EPOLLONESHOT 模式（只监听一次事件），同时记录连接数。
+4.关闭连接：从 epoll 对象中删除 sockfd，关闭 client 的 fd，并更新连接数。
+5.实现了读和写方法，这里的读和写是非阻塞的，因此它们只会一次性地读或写完数据。
+6.process() 是处理 HTTP 请求的入口函数。在这个例子中，通过解析 HTTP 请求和生成响应来处理客户端请求。
+
+这段代码并没有展示完整的 HTTP 协议实现细节，只是提供了一个基本的框架来理解 HTTP 服务器的工作流程。
