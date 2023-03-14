@@ -59,7 +59,7 @@ threadpool<T>::threadpool(int thread_number,int max_request):
         }
         //创建thread_number个线程，并将它们设置为线程脱离
         for(int i = 0; i < thread_number; ++i) {
-            std::cout << "create the " + i + "th thread" << endl;
+            printf("create the  %dth thread\n",i );
             if(pthread_create(m_threads + i, NULL, worker, this) != 0) {
                 delete []m_threads;
                 throw std::exception();
@@ -94,7 +94,7 @@ bool threadpool<T>::append(T* request) {
 template<typename T>
 void * threadpool<T>::worker(void * arg) {
     threadpool *pool = (threadpool *) arg;
-    pool->run;
+    pool->run();
     return pool;
 }
 

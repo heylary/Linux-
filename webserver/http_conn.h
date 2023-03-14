@@ -26,6 +26,10 @@ class http_conn {
         ~http_conn() {}
 
         void process(); //处理客户端的请求 
+        void init(int sockfd,const sockaddr_in &addr);  //初始化新接收的连接
+        void close_conn(); //关闭连接
+        bool read(); //非阻塞的读
+        bool write(); //非阻塞的写
     private:
         int m_sockfd; //该http连接的socket
         sockaddr_in m_address;  //通信的socket地址

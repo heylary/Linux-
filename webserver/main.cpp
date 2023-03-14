@@ -48,7 +48,7 @@ int main(int argc, char* argv[]) {
         exit(-1);
     }
     // 创建一个数组用于保存所有客户端信息
-    http_conn * user = new http_conn[ MAX_FD ];
+    http_conn * users = new http_conn[ MAX_FD ];
 
     //创建监听套接字
     int listenfd = socket(PF_INET,SOCK_STREAM,0);
@@ -87,16 +87,37 @@ int main(int argc, char* argv[]) {
                 socklen_t client_addrlen = sizeof(client_address);
                 int connfd = accept(listenfd,(struct sockaddr*)&client_address,&client_addrlen);
                 if(http_conn::m_user_count >= MAX_FD) {
+                    //目前连接数量已满
+                    //给客户端写一个信息：服务器内部正忙
                     close(connfd);
                     continue;
                 }
+                // 将新的客户的数据初始化，放到数组中
+                users[connfd].init(connfd,client_address);
+            }else if(events[i].events & (EPOLLRDHUP | EPOLLHUP | EPOLLERR)) {
+                // 对方异常断开或者错误等事件
+                users[sockfd].close_conn();
+            } else if(events[i].events & EPOLLIN) {
+                if(users[sockfd].read()) {
+                    //一次性把所有数据都读完
+                    pool->append(users + sockfd);
+                }else {
+                    users[sockfd].close_conn();
+                }
+            } else if(events[i].events & EPOLLOUT) {
+                if( !users[sockfd].write()) {
+                    users[sockfd].close_conn();
+                }   
             }
-
-
 
         }
 
     }
+
+    close(epollfd);
+    close(listenfd);
+    delete[] users;
+    delete pool;
 
 
     return 0;
